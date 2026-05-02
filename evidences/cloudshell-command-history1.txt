@@ -1,0 +1,465 @@
+    1  aws sts get-caller-identity
+    2  export AWS_REGION=ap-south-1
+    3  echo $AWS_REGION
+    4  mkdir -p microservices-container-security
+    5  cd microservices-container-security
+    6  cat > app.py <<'EOF'
+from flask import Flask
+import os
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return {
+        "message": "Secure Microservice Running",
+        "environment": os.getenv("APP_ENV", "dev")
+    }
+
+@app.route("/health")
+def health():
+    return {"status": "healthy"}
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
+EOF
+
+    7  cat > requirements.txt <<'EOF'
+flask==3.0.3
+EOF
+
+    8  cat > Dockerfile <<'EOF'
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app.py .
+
+EXPOSE 8080
+
+CMD ["python", "app.py"]
+EOF
+
+    9  ls -l
+   10  cat Dockerfile
+   11  docker build -t secure-microservice:v1 .
+   12  docker run -d -p 8080:8080 --name secure-microservice secure-microservice:v1
+   13  docker ps
+   14  curl http://localhost:8080/
+   15  curl http://localhost:8080/health
+   16  docker stop secure-microservice
+   17  docker rm secure-microservice
+   18  docker images
+   19  trivy image secure-microservice:v1
+   20  sudo rpm -ivh https://github.com/aquasecurity/trivy/releases/download/v0.56.2/trivy_0.56.2_Linux-64bit.rpm
+   21  sudo tee /etc/yum.repos.d/trivy.repo <<'EOF'
+[trivy]
+name=Trivy repository
+baseurl=https://aquasecurity.github.io/trivy-repo/rpm/releases/$releasever/$basearch/
+gpgcheck=0
+enabled=1
+EOF
+
+   22  sudo yum -y install trivy
+   23  trivy --version
+   24  https://aquasecurity.github.io/trivy-repo/rpm/releases/latest/x86_64/
+   25  docker run --rm   -v /var/run/docker.sock:/var/run/docker.sock   -v $HOME/.cache/trivy:/root/.cache/   aquasec/trivy:latest image secure-microservice:v1
+   26  docker run --rm   -v /var/run/docker.sock:/var/run/docker.sock   -v $HOME/.cache/trivy:/root/.cache/   aquasec/trivy:latest image secure-microservice:v1 > trivy-scan-before.txt
+   27  head -40 trivy-scan-before.txt
+   28  rm -rf $HOME/.cache/trivy
+   29  rm -f trivy-scan-before.txt
+   30  docker system df
+   31  rm -rf $HOME/.cache/trivy
+   32  sudo rm -rf $HOME/.cache/trivy
+   33  rm -f trivy-scan-before.txt
+   34  docker system dfrm -f trivy-scan-before.txt
+   35  docker system df
+   36  docker container prune -f
+   37  docker image prune -f
+   38  docker builder prune -f
+   39  df -h
+   40  mkdir -p /tmp/trivy-cache
+   41  docker run --rm   -v /var/run/docker.sock:/var/run/docker.sock   -v /tmp/trivy-cache:/root/.cache/   aquasec/trivy:latest image secure-microservice:v1
+   42  docker run --rm   -v /var/run/docker.sock:/var/run/docker.sock   -v /tmp/trivy-cache:/root/.cache/   aquasec/trivy:latest image secure-microservice:v1 > trivy-scan-before.txt
+   43  head -40 trivy-scan-before.txt
+   44  export AWS_REGION=ap-south-1
+   45  BUCKET_NAME="trivy-report-632127306880-$(date +%Y%m%d%H%M%S)"
+   46  aws s3 mb "s3://$BUCKET_NAME" --region "$AWS_REGION"
+   47  aws s3 cp trivy-scan-before.txt "s3://$BUCKET_NAME/trivy-scan-before.txt"
+   48  aws s3 ls "s3://$BUCKET_NAME/"
+   49  cd ~/microservices-container-security
+   50  mkdir -p auth-service product-service
+   51  cat > auth-service/app.py <<'EOF'
+from flask import Flask, request
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return {"service": "auth-service", "status": "running"}
+
+@app.route("/login", methods=["POST"])
+def login():
+    return {"message": "User authenticated successfully"}
+
+@app.route("/health")
+def health():
+    return {"status": "healthy"}
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8081)
+EOF
+
+   52  cat > auth-service/requirements.txt <<'EOF'
+flask==3.0.3
+EOF
+
+   53  cat > auth-service/Dockerfile <<'EOF'
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app.py .
+
+EXPOSE 8081
+
+CMD ["python", "app.py"]
+EOF
+
+   54  cat > product-service/app.py <<'EOF'
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return {"service": "product-service", "status": "running"}
+
+@app.route("/products")
+def products():
+    return {
+        "products": [
+            {"id": 1, "name": "Laptop"},
+            {"id": 2, "name": "Mobile"}
+        ]
+    }
+
+@app.route("/health")
+def health():
+    return {"status": "healthy"}
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8082)
+EOF
+
+   55  cat > product-service/requirements.txt <<'EOF'
+flask==3.0.3
+EOF
+
+   56  cat > product-service/Dockerfile <<'EOF'
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app.py .
+
+EXPOSE 8082
+
+CMD ["python", "app.py"]
+EOF
+
+   57  docker build -t auth-service:v1 ./auth-service
+   58  docker build -t product-service:v1 ./product-service
+   59  docker images | grep service
+   60  docker run -d -p 8081:8081 --name auth-service auth-service:v1
+   61  docker run -d -p 8082:8082 --name product-service product-service:v1
+   62  docker ps
+   63  curl http://localhost:8081/
+   64  curl http://localhost:8081/health
+   65  curl -X POST http://localhost:8081/login
+   66  curl http://localhost:8082/
+   67  curl http://localhost:8082/health
+   68  curl http://localhost:8082/products
+   69  docker stop auth-service product-service
+   70  docker rm auth-service product-service
+   71  docker run --rm   -v /var/run/docker.sock:/var/run/docker.sock   -v /tmp/trivy-cache:/root/.cache/   aquasec/trivy:latest image auth-service:v1 > trivy-auth-service.txt
+   72  docker run --rm   -v /var/run/docker.sock:/var/run/docker.sock   -v /tmp/trivy-cache:/root/.cache/   aquasec/trivy:latest image product-service:v1 > trivy-product-service.txt
+   73  ls -lh trivy-*.txt
+   74  head -30 trivy-auth-service.txt
+   75  head -30 trivy-product-service.txt
+   76  cd ~/microservices-container-security
+   77  cat > namespace.yaml <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: microservices-secure-ns
+EOF
+
+   78  cat > secret.yaml <<'EOF'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secret
+  namespace: microservices-secure-ns
+type: Opaque
+stringData:
+  APP_ENV: production
+  AUTH_TOKEN: secure-demo-token
+EOF
+
+   79  cat > auth-deployment.yaml <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: microservices-secure-ns
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+      - name: auth-service
+        image: auth-service:v1
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8081
+        env:
+        - name: APP_ENV
+          valueFrom:
+            secretKeyRef:
+              name: app-secret
+              key: APP_ENV
+        - name: AUTH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: app-secret
+              key: AUTH_TOKEN
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 10001
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: microservices-secure-ns
+spec:
+  selector:
+    app: auth-service
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8081
+  type: ClusterIP
+EOF
+
+   80  cat > product-deployment.yaml <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-service
+  namespace: microservices-secure-ns
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: product-service
+  template:
+    metadata:
+      labels:
+        app: product-service
+    spec:
+      containers:
+      - name: product-service
+        image: product-service:v1
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8082
+        env:
+        - name: APP_ENV
+          valueFrom:
+            secretKeyRef:
+              name: app-secret
+              key: APP_ENV
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 10001
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: product-service
+  namespace: microservices-secure-ns
+spec:
+  selector:
+    app: product-service
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8082
+  type: ClusterIP
+EOF
+
+   81  cat > networkpolicy.yaml <<'EOF'
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: restrict-microservice-traffic
+  namespace: microservices-secure-ns
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector: {}
+EOF
+
+   82  ls -l *.yaml
+   83  kubectl version --client
+   84  kubectl cluster-info
+   85  kubectl apply -f namespace.yaml
+   86  kubectl apply -f secret.yaml
+   87  kubectl apply -f auth-deployment.yaml
+   88  kubectl apply -f product-deployment.yaml
+   89  kubectl apply -f networkpolicy.yaml
+   90  kubectl apply -f namespace.yaml
+   91  curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.26.0/kind-linux-amd64
+   92  chmod +x ./kind
+   93  sudo mv ./kind /usr/local/bin/kind
+   94  kind create cluster --name microservices-secure
+   95  kind delete cluster --name microservices-secure
+   96  eksctl version
+   97  ARCH=amd64
+   98  PLATFORM=$(uname -s)_$ARCH
+   99  curl -sLO "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_$PLATFORM.tar.gz"
+  100  tar -xzf eksctl_$PLATFORM.tar.gz -C /tmp
+  101  sudo mv /tmp/eksctl /usr/local/bin
+  102  eksctl create cluster   --name microservices-secure   --region ap-south-1   --nodes 2   --node-type t3.small   --managed
+  103  aws eks update-kubeconfig   --region ap-south-1   --name microservices-secure
+  104  kubectl get nodes
+  105  kubectl cluster-info
+  106  kubectl apply -f namespace.yaml
+  107  kubectl apply -f secret.yaml
+  108  kubectl apply -f auth-deployment.yaml
+  109  kubectl apply -f product-deployment.yaml
+  110  kubectl apply -f networkpolicy.yaml
+  111  kubectl get all -n microservices-secure-ns
+  112  kubectl get secrets -n microservices-secure-ns
+  113  kubectl get networkpolicy -n microservices-secure-ns
+  114  aws ecr create-repository --repository-name auth-service --region $AWS_REGION
+  115  aws ecr create-repository --repository-name product-service --region $AWS_REGION
+  116  aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+  117  export AWS_REGION=ap-south-1
+  118  export ACCOUNT_ID=632127306880
+  119  aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+  120  docker tag auth-service:v1 $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/auth-service:v1
+  121  docker tag product-service:v1 $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/product-service:v1
+  122  docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/auth-service:v1
+  123  docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/product-service:v1
+  124  sed -i "s|image: auth-service:v1|image: $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/auth-service:v1|" auth-deployment.yaml
+  125  sed -i "s|image: product-service:v1|image: $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/product-service:v1|" product-deployment.yaml
+  126  sed -i "s|imagePullPolicy: Never|imagePullPolicy: IfNotPresent|g" auth-deployment.yaml product-deployment.yaml
+  127  kubectl apply -f auth-deployment.yaml
+  128  kubectl apply -f product-deployment.yaml
+  129  kubectl get pods -n microservices-secure-ns
+  130  kubectl get all -n microservices-secure-ns
+  131  kubectl get pods -n microservices-secure-ns
+  132  kubectl get all -n microservices-secure-ns
+  133  kubectl describe deployment auth-service -n microservices-secure-ns
+  134  kubectl describe deployment product-service -n microservices-secure-ns
+  135  kubectl run test-client   --rm -it   --image=curlimages/curl   -n microservices-secure-ns   -- sh
+  136  kubectl get pods -n microservices-secure-ns
+  137  kubectl get svc -n microservices-secure-ns
+  138  kubectl get secrets -n microservices-secure-ns
+  139  kubectl get networkpolicy -n microservices-secure-ns
+  140  kubectl describe secret app-secret -n microservices-secure-ns
+  141  kubectl describe networkpolicy restrict-microservice-traffic -n microservices-secure-ns
+  142  kubectl describe pod -n microservices-secure-ns
+  143  mkdir -p assignment-evidence
+  144  cp app.py requirements.txt Dockerfile assignment-evidence/ 2>/dev/null
+  145  cp -r auth-service product-service assignment-evidence/
+  146  cp *.yaml assignment-evidence/
+  147  cp trivy-*.txt assignment-evidence/ 2>/dev/null
+  148  ls -R assignment-evidence
+  149  cd ~/microservices-container-security
+  150  zip -r assignment-evidence.zip assignment-evidence
+  151  ls -lh assignment-evidence.zip
+  152  cd ~/microservices-container-security
+  153  zip -r assignment-evidence.zip assignment-evidence
+  154  aws s3 cp assignment-evidence.zip s3://trivy-report-632127306880-20260502125254/assignment-evidence.zip
+  155  aws s3 ls s3://trivy-report-632127306880-20260502125254/
+  156  kubectl get secrets -n microservices-secure-ns
+  157  kubectl get networkpolicy -n microservices-secure-ns
+  158  kubectl describe networkpolicy restrict-microservice-traffic -n microservices-secure-ns
+  159  kubectl run test-client --rm -it --image=curlimages/curl -n microservices-secure-ns -- sh
+  160  history > cloudshell-command-history.txt
+  161  cd ~/microservices-container-security
+  162  helm create microservices-secure-chart
+  163  cd ~/microservices-container-security
+  164  curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+  165  chmod 700 get_helm.sh
+  166  ./get_helm.sh
+  167  helm create microservices-secure-chart
+  168  rm -rf microservices-secure-chart/templates/*
+  169  cp namespace.yaml microservices-secure-chart/templates/
+  170  cp secret.yaml microservices-secure-chart/templates/
+  171  cp auth-deployment.yaml microservices-secure-chart/templates/
+  172  cp product-deployment.yaml microservices-secure-chart/templates/
+  173  cp networkpolicy.yaml microservices-secure-chart/templates/
+  174  helm lint microservices-secure-chart
+  175  cd ~/microservices-container-security
+  176  kubectl delete -f networkpolicy.yaml
+  177  kubectl delete -f product-deployment.yaml
+  178  kubectl delete -f auth-deployment.yaml
+  179  kubectl delete -f secret.yaml
+  180  kubectl delete -f namespace.yaml
+  181  kubectl get ns | grep microservices-secure-ns
+  182  helm install microservices-secure-release ./microservices-secure-chart
+  183  helm list
+  184  helm status microservices-secure-release
+  185  kubectl get all -n microservices-secure-ns
+  186  kubectl get secrets -n microservices-secure-ns
+  187  kubectl get networkpolicy -n microservices-secure-ns
+  188  kubectl get all -n microservices-secure-ns
+  189  kubectl get secrets -n microservices-secure-ns
+  190  kubectl get networkpolicy -n microservices-secure-ns
+  191  kubectl run test-client --rm -it --image=curlimages/curl -n microservices-secure-ns -- sh
+  192  history > cloudshell-command-history1.txt
